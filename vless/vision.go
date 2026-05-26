@@ -42,6 +42,8 @@ type VisionConn struct {
 	input       *bytes.Reader
 	rawInput    *bytes.Buffer
 	netConn     net.Conn
+	rawConn     net.Conn //https://github.com/starifly/sing-box raw connection for Vision internal operations (TLS/encryption layer)
+	directConn  net.Conn //https://github.com/starifly/sing-box
 	logger      logger.Logger
 
 	userUUID               [16]byte
@@ -51,6 +53,7 @@ type VisionConn struct {
 	remainingServerHello   int32
 	cipher                 uint16
 	enableXTLS             bool
+	canSplice              bool //https://github.com/starifly/sing-box
 	isPadding              bool
 	directWrite            bool
 	writeUUID              bool
@@ -62,15 +65,15 @@ type VisionConn struct {
 	remainingBuffers       []*buf.Buffer
 }
 
-func NewVisionConn(conn net.Conn, tlsConn net.Conn, userUUID [16]byte, logger logger.Logger) (*VisionConn, error) {
+func NewVisionConn(conn net.Conn, tlsConn net.Conn, userUUID [16]byte, logger logger.Logger, canSplice bool) (*VisionConn, error) { //https://github.com/starifly/sing-box
 	var (
-		loaded         bool
-		reflectType    reflect.Type
-		reflectPointer uintptr
-		netConn        net.Conn
+		loaded bool
+		//reflectType    reflect.Type // https://github.com/starifly/sing-box
+		//reflectPointer uintptr // https://github.com/starifly/sing-box
+		//netConn        net.Conn // https://github.com/starifly/sing-box
 	)
 	for _, tlsCreator := range tlsRegistry {
-		loaded, netConn, reflectType, reflectPointer = tlsCreator(tlsConn)
+		loaded, _, _, _ = tlsCreator(tlsConn) // https://github.com/starifly/sing-box
 		if loaded {
 			break
 		}
@@ -78,20 +81,39 @@ func NewVisionConn(conn net.Conn, tlsConn net.Conn, userUUID [16]byte, logger lo
 	if !loaded {
 		return nil, E.New("vision: not a valid supported TLS connection: ", reflect.TypeOf(tlsConn))
 	}
-	input, _ := reflectType.FieldByName("input")
-	rawInput, _ := reflectType.FieldByName("rawInput")
+	//https://github.com/starifly/sing-box begin
+	// tlsConn can be:
+	// 1. TLS connection (when TLS/Reality is used)
+	// 2. Encryption layer (when only encryption is used, no TLS/Reality)
+	baseConn := unwrapConn(tlsConn)
+
+	info, err := extractVisionConnInfo(conn, baseConn)
+	if err != nil {
+		return nil, err
+	}
+	//input, _ := reflectType.FieldByName("input") // https://github.com/starifly/sing-box
+	//rawInput, _ := reflectType.FieldByName("rawInput") // https://github.com/starifly/sing-box
+	//https://github.com/starifly/sing-box end
 	return &VisionConn{
-		Conn:     conn,
-		reader:   bufio.NewChunkReader(conn, xrayChunkSize),
-		writer:   bufio.NewVectorisedWriter(conn),
-		input:    (*bytes.Reader)(unsafe.Pointer(reflectPointer + input.Offset)),
-		rawInput: (*bytes.Buffer)(unsafe.Pointer(reflectPointer + rawInput.Offset)),
-		netConn:  netConn,
-		logger:   logger,
+		Conn:       conn,
+		reader:     bufio.NewChunkReader(conn, xrayChunkSize),
+		writer:     bufio.NewVectorisedWriter(conn),
+		input:      info.input,
+		rawInput:   info.rawInput,
+		netConn:    info.netConn,
+		rawConn:    info.rawConn,
+		directConn: info.rawConn,
+		//https://github.com/starifly/sing-box begin
+		//input:    (*bytes.Reader)(unsafe.Pointer(reflectPointer + input.Offset)),
+		//rawInput: (*bytes.Buffer)(unsafe.Pointer(reflectPointer + rawInput.Offset)),
+		//netConn:  netConn,
+		//https://github.com/starifly/sing-box end
+		logger: logger,
 
 		userUUID:               userUUID,
 		numberOfPacketToFilter: 8,
 		remainingServerHello:   -1,
+		canSplice:              canSplice, //https://github.com/starifly/sing-box
 		isPadding:              true,
 		writeUUID:              true,
 		withinPaddingBuffers:   true,
@@ -116,7 +138,7 @@ func (c *VisionConn) Read(p []byte) (n int, err error) {
 		return
 	}
 	if c.directRead {
-		return c.netConn.Read(p)
+		return c.directConn.Read(p) //https://github.com/starifly/sing-box
 	}
 	var bufferBytes []byte
 	var chunkBuffer *buf.Buffer
@@ -224,7 +246,7 @@ func (c *VisionConn) Write(p []byte) (n int, err error) {
 				return
 			}
 			buffers = buffers[specIndex+1:]
-			c.writer = bufio.NewVectorisedWriter(c.netConn)
+			c.writer = bufio.NewVectorisedWriter(c.directConn) //https://github.com/starifly/sing-box
 			if len(buffers) > 0 {
 				c.logger.Trace("XtlsWrite writeV ", specIndex, " ", buf.LenMulti(encryptedBuffer), " ", len(buffers))
 				time.Sleep(5 * time.Millisecond) // wtf
@@ -239,7 +261,7 @@ func (c *VisionConn) Write(p []byte) (n int, err error) {
 		return
 	}
 	if c.directWrite {
-		return c.netConn.Write(p)
+		return c.directConn.Write(p) //https://github.com/starifly/sing-box
 	} else {
 		return c.Conn.Write(p)
 	}

@@ -6,7 +6,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/sagernet/sing-vmess"
+	vmess "github.com/sagernet/sing-vmess"
 	"github.com/sagernet/sing/common/auth"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
@@ -53,6 +53,10 @@ func (s *Service[T]) UpdateUsers(userList []T, userUUIDList []string, userFlowLi
 }
 
 func (s *Service[T]) NewConnection(ctx context.Context, conn net.Conn, source M.Socksaddr, onClose N.CloseHandlerFunc) error {
+	return s.NewConnectionWithOptions(ctx, conn, source, onClose, true) // https://github.com/starifly/sing-box
+}
+
+func (s *Service[T]) NewConnectionWithOptions(ctx context.Context, conn net.Conn, source M.Socksaddr, onClose N.CloseHandlerFunc, canSplice bool) error { // https://github.com/starifly/sing-box
 	request, err := ReadRequest(conn)
 	if err != nil {
 		return err
@@ -76,7 +80,7 @@ func (s *Service[T]) NewConnection(ctx context.Context, conn net.Conn, source M.
 	responseConn := &serverConn{ExtendedConn: bufio.NewExtendedConn(conn)}
 	switch userFlow {
 	case FlowVision:
-		conn, err = NewVisionConn(responseConn, conn, request.UUID, s.logger)
+		conn, err = NewVisionConn(responseConn, conn, request.UUID, s.logger, canSplice) // https://github.com/starifly/sing-box
 		if err != nil {
 			return E.Cause(err, "initialize vision")
 		}
