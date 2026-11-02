@@ -225,7 +225,7 @@ func (c *VisionConn) SetDirectConn(conn net.Conn) {
 	c.writeAccess.Lock()
 	defer c.writeAccess.Unlock()
 	c.directConn = conn
-	if c.directWrite {
+	if c.directWrite.Load() {
 		c.writer = bufio.NewVectorisedWriter(conn)
 	}
 }
@@ -319,7 +319,7 @@ func (c *VisionConn) ReaderReplaceable() bool {
 func (c *VisionConn) WriterReplaceable() bool {
 	c.writeAccess.Lock()
 	defer c.writeAccess.Unlock()
-	return c.directWrite
+	return c.directWrite.Load()
 }
 
 func (c *VisionConn) UpstreamReader() any {
@@ -332,7 +332,7 @@ func (c *VisionConn) UpstreamReader() any {
 func (c *VisionConn) UpstreamWriter() any {
 	c.writeAccess.Lock()
 	defer c.writeAccess.Unlock()
-	if c.directWrite {
+	if c.directWrite.Load() {
 		return c.directConn
 	}
 	return nil
